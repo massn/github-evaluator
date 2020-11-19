@@ -25,6 +25,7 @@ type Repo struct {
 	Contributors int
 	Issues       int
 	Information  *github.Repository
+	Etc          string `yaml:"etc"`
 }
 
 type ClientParameter struct {
@@ -97,6 +98,7 @@ func printTable(repos []Repo, footer string) {
 			strconv.Itoa(repo.Contributors),
 			strconv.Itoa(repo.Issues),
 			strconv.Itoa(*repo.Information.StargazersCount),
+			repo.Etc,
 		}
 		tableData = append(tableData, entry)
 	}
@@ -107,8 +109,9 @@ func printTable(repos []Repo, footer string) {
 		"Contributors",
 		"Issues",
 		"Stars",
+		"Etc",
 	})
-	table.SetFooter([]string{footer, "", "", "", time.Now().Local().Format("2006-01-02 15:04:05")})
+	table.SetFooter([]string{footer, "", "", "", "", time.Now().Local().Format("2006-01-02 15:04:05")})
 	table.AppendBulk(tableData)
 	table.Render()
 }
@@ -129,8 +132,10 @@ func newClient(ctx context.Context) *github.Client {
 
 func getStats(repo Repo, p ClientParameter, repoChan chan Repo) {
 	var resultRepo Repo
-	resultRepo.Name = repo.Name
-	resultRepo.Location = repo.Location
+	resultRepo = repo
+	//resultRepo.Name = repo.Name
+	//resultRepo.Location = repo.Location
+	//resultRepo.Etc
 	owner, project, err := getOwnerAndProject(repo.Location)
 	if err != nil {
 		fmt.Printf("Failed to get the owner and project of %v. Reason: %v ", repo.Name, err)

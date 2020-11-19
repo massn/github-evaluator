@@ -59,12 +59,38 @@ func Stats(reposYamlPath string) {
 		resultRepo := <-repoChan
 		resultRepos = append(resultRepos, resultRepo)
 	}
-	sort.Slice(resultRepos, func(i, j int) bool {
-		return *resultRepos[i].Information.StargazersCount > *resultRepos[j].Information.StargazersCount
-	})
+	s := sortInStarsDecending(resultRepos)
+	printTable(s, "stars descending")
+	s = sortInIssuesDecending(resultRepos)
+	printTable(s, "issues descending")
+	s = sortInContributorsDecending(resultRepos)
+	printTable(s, "contributors descending")
+}
 
+func sortInIssuesDecending(repos []Repo) []Repo {
+	sort.Slice(repos, func(i, j int) bool {
+		return repos[i].Issues > repos[j].Issues
+	})
+	return repos
+}
+
+func sortInStarsDecending(repos []Repo) []Repo {
+	sort.Slice(repos, func(i, j int) bool {
+		return *repos[i].Information.StargazersCount > *repos[j].Information.StargazersCount
+	})
+	return repos
+}
+
+func sortInContributorsDecending(repos []Repo) []Repo {
+	sort.Slice(repos, func(i, j int) bool {
+		return repos[i].Contributors > repos[j].Contributors
+	})
+	return repos
+}
+
+func printTable(repos []Repo, footer string) {
 	tableData := [][]string{}
-	for _, repo := range resultRepos {
+	for _, repo := range repos {
 		entry := []string{
 			repo.Name,
 			repo.Location,
@@ -82,7 +108,7 @@ func Stats(reposYamlPath string) {
 		"Issues",
 		"Stars",
 	})
-	table.SetFooter([]string{"", "", "", "", time.Now().Local().Format("2006-01-02 15:04:05")})
+	table.SetFooter([]string{footer, "", "", "", time.Now().Local().Format("2006-01-02 15:04:05")})
 	table.AppendBulk(tableData)
 	table.Render()
 }

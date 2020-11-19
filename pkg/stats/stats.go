@@ -90,11 +90,12 @@ func Stats(reposYamlPath string) {
 func newClient(ctx context.Context) *github.Client {
 	data, err := ioutil.ReadFile("token")
 	if err != nil {
-		fmt.Println("Failed to login")
+		fmt.Println("Failed to get token")
 		panic(err)
 	}
+	token := strings.Trim(string(data), "\n")
 	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: string(data)},
+		&oauth2.Token{AccessToken: token},
 	)
 	tc := oauth2.NewClient(ctx, ts)
 	return github.NewClient(tc)

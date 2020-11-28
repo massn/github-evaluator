@@ -31,6 +31,7 @@ type Repo struct {
 type StatsClient struct {
 	client  *github.Client
 	ctx     context.Context
+	repo    Repo
 	owner   string
 	project string
 }
@@ -46,15 +47,12 @@ func Stats(reposYamlPath string) {
 		panic(err)
 	}
 	fmt.Printf("%d repos\n", len(repos))
-	ctx := context.Background()
-	client := newClient(ctx)
-	sc := StatsClient{ctx: ctx, client: client}
 	resultRepos := []Repo{}
 
 	repoChan := make(chan Repo, len(repos))
 
 	for _, repo := range repos {
-		go getStats(repo, sc, repoChan)
+		go getStats(repo, repoChan)
 	}
 	for range repos {
 		resultRepo := <-repoChan
@@ -116,6 +114,54 @@ func printTable(repos []Repo, footer string) {
 	table.Render()
 }
 
+func getStats(repo Repo, repoChan chan Repo) {
+	sc, err := newStatsClient(repo)
+	if err != nil {
+		repoChan <- repo
+	}
+
+	info, err := getInformation(sc)
+	if err != nil {
+		fmt.Printf("Failed to get the information of %v. Reason: %v ", repo.Name, err)
+		repoChan <- repo
+		return
+	}
+	repo.Information = info
+	cs, err := getContributors(sc)
+	if err != nil {
+		fmt.Printf("Failed to get the contributors of %v. Reason: %v ", repo.Name, err)
+		repoChan <- repo
+		return
+	}
+	repo.Contributors = cs
+
+	issues, err := getIssues(sc)
+	if err != nil {
+		fmt.Printf("Failed to get the issues of %v. Reason: %v ", repo.Name, err)
+		repoChan <- repo
+		return
+	}
+	repo.Issues = issues
+	repoChan <- repo
+}
+
+func newStatsClient(repo Repo) (StatsClient, error) {
+	ctx := context.Background()
+	client := newClient(ctx)
+	owner, project, err := getOwnerAndProject(repo.Location)
+	if err != nil {
+		fmt.Printf("Failed to get the owner and project of %v. Reason: %v ", repo.Name, err)
+		return StatsClient{}, err
+	}
+	return StatsClient{
+		client:  client,
+		ctx:     ctx,
+		owner:   owner,
+		project: project,
+		repo:    repo,
+	}, nil
+}
+
 func newClient(ctx context.Context) *github.Client {
 	data, err := ioutil.ReadFile("token")
 	if err != nil {
@@ -130,43 +176,7 @@ func newClient(ctx context.Context) *github.Client {
 	return github.NewClient(tc)
 }
 
-func getStats(repo Repo, sc StatsClient, repoChan chan Repo) {
-	var resultRepo Repo
-	resultRepo = repo
-	owner, project, err := getOwnerAndProject(repo.Location)
-	if err != nil {
-		fmt.Printf("Failed to get the owner and project of %v. Reason: %v ", repo.Name, err)
-		repoChan <- resultRepo
-		return
-	}
-	sc.owner = owner
-	sc.project = project
-	info, err := getInformation(repo, sc)
-	if err != nil {
-		fmt.Printf("Failed to get the information of %v. Reason: %v ", repo.Name, err)
-		repoChan <- resultRepo
-		return
-	}
-	resultRepo.Information = info
-	cs, err := getContributors(repo, sc)
-	if err != nil {
-		fmt.Printf("Failed to get the contributors of %v. Reason: %v ", repo.Name, err)
-		repoChan <- resultRepo
-		return
-	}
-	resultRepo.Contributors = cs
-
-	issues, err := getIssues(repo, sc)
-	if err != nil {
-		fmt.Printf("Failed to get the issues of %v. Reason: %v ", repo.Name, err)
-		repoChan <- resultRepo
-		return
-	}
-	resultRepo.Issues = issues
-	repoChan <- resultRepo
-}
-
-func getContributors(repo Repo, sc StatsClient) (int, error) {
+func getContributors(sc StatsClient) (int, error) {
 	perPage := 100
 	l := github.ListOptions{PerPage: perPage}
 	conOpts := github.ListContributorsOptions{ListOptions: l}
@@ -190,7 +200,7 @@ func getContributors(repo Repo, sc StatsClient) (int, error) {
 	return perPage*(lp-fp) + len(lastCsList), nil
 }
 
-func getIssues(repo Repo, sc StatsClient) (int, error) {
+func getIssues(sc StatsClient) (int, error) {
 	perPage := 30
 	l := github.ListOptions{PerPage: perPage}
 	repoOpts := github.IssueListByRepoOptions{State: "all", ListOptions: l}
@@ -214,7 +224,7 @@ func getIssues(repo Repo, sc StatsClient) (int, error) {
 	return perPage*(lp-fp) + len(lastIsList), nil
 }
 
-func getInformation(repo Repo, sc StatsClient) (*github.Repository, error) {
+func getInformation(sc StatsClient) (*github.Repository, error) {
 	info, _, err := sc.client.Repositories.Get(sc.ctx, sc.owner, sc.project)
 	if err != nil {
 		return &github.Repository{}, err

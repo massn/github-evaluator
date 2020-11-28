@@ -28,7 +28,7 @@ type Repo struct {
 	Etc          string `yaml:"etc"`
 }
 
-type ClientParameter struct {
+type StatsClient struct {
 	client  *github.Client
 	ctx     context.Context
 	owner   string
@@ -48,13 +48,13 @@ func Stats(reposYamlPath string) {
 	fmt.Printf("%d repos\n", len(repos))
 	ctx := context.Background()
 	client := newClient(ctx)
-	p := ClientParameter{ctx: ctx, client: client}
+	sc := StatsClient{ctx: ctx, client: client}
 	resultRepos := []Repo{}
 
 	repoChan := make(chan Repo, len(repos))
 
 	for _, repo := range repos {
-		go getStats(repo, p, repoChan)
+		go getStats(repo, sc, repoChan)
 	}
 	for range repos {
 		resultRepo := <-repoChan
@@ -130,28 +130,25 @@ func newClient(ctx context.Context) *github.Client {
 	return github.NewClient(tc)
 }
 
-func getStats(repo Repo, p ClientParameter, repoChan chan Repo) {
+func getStats(repo Repo, sc StatsClient, repoChan chan Repo) {
 	var resultRepo Repo
 	resultRepo = repo
-	//resultRepo.Name = repo.Name
-	//resultRepo.Location = repo.Location
-	//resultRepo.Etc
 	owner, project, err := getOwnerAndProject(repo.Location)
 	if err != nil {
 		fmt.Printf("Failed to get the owner and project of %v. Reason: %v ", repo.Name, err)
 		repoChan <- resultRepo
 		return
 	}
-	p.owner = owner
-	p.project = project
-	info, err := getInformation(repo, p)
+	sc.owner = owner
+	sc.project = project
+	info, err := getInformation(repo, sc)
 	if err != nil {
 		fmt.Printf("Failed to get the information of %v. Reason: %v ", repo.Name, err)
 		repoChan <- resultRepo
 		return
 	}
 	resultRepo.Information = info
-	cs, err := getContributors(repo, p)
+	cs, err := getContributors(repo, sc)
 	if err != nil {
 		fmt.Printf("Failed to get the contributors of %v. Reason: %v ", repo.Name, err)
 		repoChan <- resultRepo
@@ -159,7 +156,7 @@ func getStats(repo Repo, p ClientParameter, repoChan chan Repo) {
 	}
 	resultRepo.Contributors = cs
 
-	issues, err := getIssues(repo, p)
+	issues, err := getIssues(repo, sc)
 	if err != nil {
 		fmt.Printf("Failed to get the issues of %v. Reason: %v ", repo.Name, err)
 		repoChan <- resultRepo
@@ -169,12 +166,12 @@ func getStats(repo Repo, p ClientParameter, repoChan chan Repo) {
 	repoChan <- resultRepo
 }
 
-func getContributors(repo Repo, p ClientParameter) (int, error) {
+func getContributors(repo Repo, sc StatsClient) (int, error) {
 	perPage := 100
 	l := github.ListOptions{PerPage: perPage}
 	conOpts := github.ListContributorsOptions{ListOptions: l}
 
-	csList, resp, err := p.client.Repositories.ListContributors(p.ctx, p.owner, p.project, &conOpts)
+	csList, resp, err := sc.client.Repositories.ListContributors(sc.ctx, sc.owner, sc.project, &conOpts)
 	if err != nil {
 		return 0, err
 	}
@@ -186,19 +183,19 @@ func getContributors(repo Repo, p ClientParameter) (int, error) {
 
 	ll := github.ListOptions{PerPage: perPage, Page: lp}
 	conOpts = github.ListContributorsOptions{ListOptions: ll}
-	lastCsList, _, err := p.client.Repositories.ListContributors(p.ctx, p.owner, p.project, &conOpts)
+	lastCsList, _, err := sc.client.Repositories.ListContributors(sc.ctx, sc.owner, sc.project, &conOpts)
 	if err != nil {
 		return 0, err
 	}
 	return perPage*(lp-fp) + len(lastCsList), nil
 }
 
-func getIssues(repo Repo, p ClientParameter) (int, error) {
+func getIssues(repo Repo, sc StatsClient) (int, error) {
 	perPage := 30
 	l := github.ListOptions{PerPage: perPage}
 	repoOpts := github.IssueListByRepoOptions{State: "all", ListOptions: l}
 
-	isList, resp, err := p.client.Issues.ListByRepo(p.ctx, p.owner, p.project, &repoOpts)
+	isList, resp, err := sc.client.Issues.ListByRepo(sc.ctx, sc.owner, sc.project, &repoOpts)
 	if err != nil {
 		return 0, err
 	}
@@ -210,15 +207,15 @@ func getIssues(repo Repo, p ClientParameter) (int, error) {
 
 	ll := github.ListOptions{PerPage: perPage, Page: lp}
 	repoOpts = github.IssueListByRepoOptions{State: "all", ListOptions: ll}
-	lastIsList, _, err := p.client.Issues.ListByRepo(p.ctx, p.owner, p.project, &repoOpts)
+	lastIsList, _, err := sc.client.Issues.ListByRepo(sc.ctx, sc.owner, sc.project, &repoOpts)
 	if err != nil {
 		return 0, err
 	}
 	return perPage*(lp-fp) + len(lastIsList), nil
 }
 
-func getInformation(repo Repo, p ClientParameter) (*github.Repository, error) {
-	info, _, err := p.client.Repositories.Get(p.ctx, p.owner, p.project)
+func getInformation(repo Repo, sc StatsClient) (*github.Repository, error) {
+	info, _, err := sc.client.Repositories.Get(sc.ctx, sc.owner, sc.project)
 	if err != nil {
 		return &github.Repository{}, err
 	}

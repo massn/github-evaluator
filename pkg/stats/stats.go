@@ -26,6 +26,8 @@ type Repo struct {
 	Issues       int
 	Information  *github.Repository
 	Etc          string `yaml:"etc"`
+	StarsHistory string
+	Error        error
 }
 
 type StatsClient struct {
@@ -36,34 +38,75 @@ type StatsClient struct {
 	project string
 }
 
-func Stats(reposYamlPath string) {
-	data, err := ioutil.ReadFile(reposYamlPath)
-	if err != nil {
-		panic(err)
+type mode int
+
+const (
+	History mode = iota
+	Contributors
+	Info
+	Issues
+)
+
+func Stats(reposYamlPath string, m mode) error {
+	var gettingFunc func(StatsClient, chan Repo)
+	switch m {
+	case History:
+		gettingFunc = getStarsHistory
+	case Contributors:
+		gettingFunc = getContributors
+	case Info:
+		gettingFunc = getInformation
+	case Issues:
+		gettingFunc = getIssues
+	default:
+		return fmt.Errorf("Unknown mode:%d", m)
 	}
-	var repos []Repo
-	err = yaml.Unmarshal(data, &repos)
+
+	repos, err := readRepos(reposYamlPath)
 	if err != nil {
-		panic(err)
+		return err
 	}
+
 	fmt.Printf("%d repos\n", len(repos))
 	resultRepos := []Repo{}
 
 	repoChan := make(chan Repo, len(repos))
-
 	for _, repo := range repos {
-		go getStats(repo, repoChan)
+		sc, err := newStatsClient(repo)
+		if err != nil {
+			return err
+		}
+		go gettingFunc(sc, repoChan)
 	}
 	for range repos {
 		resultRepo := <-repoChan
 		resultRepos = append(resultRepos, resultRepo)
 	}
-	s := sortInStarsDecending(resultRepos)
-	printTable(s, "stars descending")
-	s = sortInIssuesDecending(resultRepos)
-	printTable(s, "issues descending")
-	s = sortInContributorsDecending(resultRepos)
-	printTable(s, "contributors descending")
+
+	var s []Repo
+	switch m {
+	case Contributors:
+		s = sortInContributorsDecending(resultRepos)
+	case Issues:
+		s = sortInIssuesDecending(resultRepos)
+	default:
+		s = sortInStarsDecending(resultRepos)
+	}
+	printTable(s)
+	return nil
+}
+
+func readRepos(reposYamlPath string) ([]Repo, error) {
+	data, err := ioutil.ReadFile(reposYamlPath)
+	if err != nil {
+		return []Repo{}, err
+	}
+	var repos []Repo
+	err = yaml.Unmarshal(data, &repos)
+	if err != nil {
+		return []Repo{}, err
+	}
+	return repos, nil
 }
 
 func sortInIssuesDecending(repos []Repo) []Repo {
@@ -75,6 +118,9 @@ func sortInIssuesDecending(repos []Repo) []Repo {
 
 func sortInStarsDecending(repos []Repo) []Repo {
 	sort.Slice(repos, func(i, j int) bool {
+		if repos[i].Information == nil || repos[j].Information == nil {
+			return true
+		}
 		return *repos[i].Information.StargazersCount > *repos[j].Information.StargazersCount
 	})
 	return repos
@@ -87,15 +133,22 @@ func sortInContributorsDecending(repos []Repo) []Repo {
 	return repos
 }
 
-func printTable(repos []Repo, footer string) {
+func printTable(repos []Repo) {
 	tableData := [][]string{}
 	for _, repo := range repos {
+		var stargazersCount string
+		if repo.Information == nil {
+			stargazersCount = "unknown"
+		} else {
+			stargazersCount = strconv.Itoa(*repo.Information.StargazersCount)
+		}
+
 		entry := []string{
 			repo.Name,
 			repo.Location,
 			strconv.Itoa(repo.Contributors),
 			strconv.Itoa(repo.Issues),
-			strconv.Itoa(*repo.Information.StargazersCount),
+			stargazersCount,
 			repo.Etc,
 		}
 		tableData = append(tableData, entry)
@@ -109,40 +162,9 @@ func printTable(repos []Repo, footer string) {
 		"Stars",
 		"Etc",
 	})
-	table.SetFooter([]string{footer, "", "", "", "", time.Now().Local().Format("2006-01-02 15:04:05")})
+	table.SetFooter([]string{"", "", "", "", "", time.Now().Local().Format("2006-01-02 15:04:05")})
 	table.AppendBulk(tableData)
 	table.Render()
-}
-
-func getStats(repo Repo, repoChan chan Repo) {
-	sc, err := newStatsClient(repo)
-	if err != nil {
-		repoChan <- repo
-	}
-
-	info, err := getInformation(sc)
-	if err != nil {
-		fmt.Printf("Failed to get the information of %v. Reason: %v ", repo.Name, err)
-		repoChan <- repo
-		return
-	}
-	repo.Information = info
-	cs, err := getContributors(sc)
-	if err != nil {
-		fmt.Printf("Failed to get the contributors of %v. Reason: %v ", repo.Name, err)
-		repoChan <- repo
-		return
-	}
-	repo.Contributors = cs
-
-	issues, err := getIssues(sc)
-	if err != nil {
-		fmt.Printf("Failed to get the issues of %v. Reason: %v ", repo.Name, err)
-		repoChan <- repo
-		return
-	}
-	repo.Issues = issues
-	repoChan <- repo
 }
 
 func newStatsClient(repo Repo) (StatsClient, error) {
@@ -176,60 +198,83 @@ func newClient(ctx context.Context) *github.Client {
 	return github.NewClient(tc)
 }
 
-func getContributors(sc StatsClient) (int, error) {
+func getStarsHistory(sc StatsClient, repoChan chan Repo) {
+	// TODO implement
+	//github.ActivityService.ListStargazsers(sc.ctx, sc.owner, sc.repo)
+	repoChan <- sc.repo
+}
+
+func getContributors(sc StatsClient, repoChan chan Repo) {
 	perPage := 100
 	l := github.ListOptions{PerPage: perPage}
 	conOpts := github.ListContributorsOptions{ListOptions: l}
 
 	csList, resp, err := sc.client.Repositories.ListContributors(sc.ctx, sc.owner, sc.project, &conOpts)
 	if err != nil {
-		return 0, err
+		repoChan <- sc.repo
+		return
 	}
 	fp := resp.FirstPage
 	lp := resp.LastPage
 	if fp == lp {
-		return len(csList), nil
+		sc.repo.Contributors = len(csList)
+		repoChan <- sc.repo
+		return
 	}
 
 	ll := github.ListOptions{PerPage: perPage, Page: lp}
 	conOpts = github.ListContributorsOptions{ListOptions: ll}
 	lastCsList, _, err := sc.client.Repositories.ListContributors(sc.ctx, sc.owner, sc.project, &conOpts)
 	if err != nil {
-		return 0, err
+		sc.repo.Error = err
+		repoChan <- sc.repo
+		return
 	}
-	return perPage*(lp-fp) + len(lastCsList), nil
+	sc.repo.Contributors = perPage*(lp-fp) + len(lastCsList)
+	repoChan <- sc.repo
 }
 
-func getIssues(sc StatsClient) (int, error) {
+func getIssues(sc StatsClient, repoChan chan Repo) {
 	perPage := 30
 	l := github.ListOptions{PerPage: perPage}
 	repoOpts := github.IssueListByRepoOptions{State: "all", ListOptions: l}
 
 	isList, resp, err := sc.client.Issues.ListByRepo(sc.ctx, sc.owner, sc.project, &repoOpts)
 	if err != nil {
-		return 0, err
+		sc.repo.Error = err
+		repoChan <- sc.repo
+		return
 	}
 	fp := resp.FirstPage
 	lp := resp.LastPage
 	if fp == lp {
-		return len(isList), nil
+		sc.repo.Issues = len(isList)
+		repoChan <- sc.repo
+		return
 	}
 
 	ll := github.ListOptions{PerPage: perPage, Page: lp}
 	repoOpts = github.IssueListByRepoOptions{State: "all", ListOptions: ll}
 	lastIsList, _, err := sc.client.Issues.ListByRepo(sc.ctx, sc.owner, sc.project, &repoOpts)
 	if err != nil {
-		return 0, err
+		sc.repo.Error = err
+		repoChan <- sc.repo
+		return
 	}
-	return perPage*(lp-fp) + len(lastIsList), nil
+	sc.repo.Issues = perPage*(lp-fp) + len(lastIsList)
+	repoChan <- sc.repo
 }
 
-func getInformation(sc StatsClient) (*github.Repository, error) {
+func getInformation(sc StatsClient, repoChan chan Repo) {
 	info, _, err := sc.client.Repositories.Get(sc.ctx, sc.owner, sc.project)
 	if err != nil {
-		return &github.Repository{}, err
+		sc.repo.Error = err
+		repoChan <- sc.repo
+		return
 	}
-	return info, nil
+	sc.repo.Information = info
+	repoChan <- sc.repo
+	return
 }
 
 func getOwnerAndProject(location string) (string, string, error) {
